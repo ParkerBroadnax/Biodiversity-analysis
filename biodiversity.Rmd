@@ -1,0 +1,383 @@
+---
+title: "ggplot2 using protein measurements in food"
+Analysis: kmeans clustering and finding the optimal number of clusters
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#import libraries
+```{r}
+library(rmarkdown)
+library(factoextra)
+library(cluster) 
+library(fpc)
+library(ggplot2)
+library(dplyr) 
+
+```
+
+#Description of data: These data measures protein consumption in 25 European countries for nine food groups. 
+#Possible to use multivariate methods to determine whether there are groupings of countries and whether meat consumption is related to that of other foods.
+
+```{r}
+#protein <- read.csv(file.choose())
+protein <- read.csv("~/datascience/Biodiversity_by_County_-_Distribution_of_Animals__Plants_and_Natural_Communities.csv")
+
+#I used this file directory to replace the old one: ~/datascience/Biodiversity_by_County_-_Distribution_of_Animals__Plants_and_Natural_Communities.csv"
+```
+
+
+```{r}
+table(protein$County)
+NY<- filter(protein, County %in% c("Kings","New York"))
+
+```
+
+
+
+```{r}
+NY_sub <- NY[,c(1,2,3,4,7,9,10,11,12)] 
+inspect_cat(NY_sub)
+
+NY_sub <- mutate_all(NY_sub, factor)
+str(NY_sub)
+
+```
+
+
+
+```{r}
+library(ggplot2)
+
+table(NY_sub$Category)
+ggplot(data = NY_sub) +
+  geom_bar(mapping = aes(x = Category))
+
+#Makes a
+NY_sub %>% 
+  count(Category)
+
+NY_sub %>% count(County, Category)
+
+NY_sub %>% count(County, Taxonomic.Group)
+
+NY_sub %>% 
+  count(County, Category) %>%  
+  ggplot(mapping = aes(x = County, y = Category)) +
+    geom_tile(mapping = aes(fill = n))
+
+NY_sub %>% 
+  count(County, Taxonomic.Subgroup) %>%  
+  ggplot(mapping = aes(x = County, y = Taxonomic.Subgroup)) +
+    geom_tile(mapping = aes(fill = n))
+
+NY_sub %>% count(County, Year.Last.Documented, Taxonomic.Group)
+#Use filter function for date (YLD)
+```
+
+```{r}
+NY_sub_name <- NY[,c(1,2,3,4,6,7,9,10,11,12)] 
+
+NY_sub_name <- mutate_all(NY_sub_name, factor)
+str(NY_sub_name)
+show(NY_sub_name)
+
+```
+
+```{r}
+
+#changing stuff from factor to numeric
+#NY_sub_name$Year.Last.Documented <- as.numeric(NY_sub_name$Year.Last.Documented)
+
+#filtering observations between 1991 and 2011
+cur_obs<- filter(NY_sub_name, Year.Last.Documented >= "1991" & Year.Last.Documented <= "2011")
+
+show(cur_obs)
+```
+
+#Lets make some charts
+```{r}
+data(cur_obs)
+
+# simple scatterplot
+ggplot(cur_obs, 
+       aes(x = Year.Last.Documented, 
+           y = State.Conservation.Rank)) +
+  geom_point(color= "steelblue") +
+  labs(x = "Year Last Documented",
+       y = "State Conservation Rank",
+       title = "Conservation Rank from 1991 to 2011")
+#Tried to make linear regression
+#lm(State.Conservation.Rank~Year.Last.Documented, data=cur_obs)+
+
+table(cur_obs)
+```
+
+
+
+```{r}
+# to perform different types of hierarchical clustering
+# package functions used: daisy(), diana(), clusplot()
+gower.dist <- daisy(NY_sub_name[,c(1:4,6:10)], metric = c("gower"))
+# class(gower.dist) 
+## dissimilarity , dist
+```
+
+```{r}
+#----------- DIVISIVE CLUSTERING ------------#
+divisive.clust <- diana(as.matrix(gower.dist), 
+                  diss = TRUE, keep.diss = TRUE)
+plot(divisive.clust, main = "Divisive")
+```
+
+#Didn't work
+```{r}
+vars.to.use <- colnames(NY_sub_name)[-5] #this removes the y variable, which is in the fifth column of the dataset.
+pmatrix <- scale(NY_sub_name[,vars.to.use])
+dim(NY_sub_name) #25 10
+
+```
+
+```{r}
+# complete
+aggl.clust.c <- hclust(gower.dist, method = "complete")
+plot(aggl.clust.c,
+     main = "Agglomerative, complete linkages")
+```
+
+
+```{r}
+# Cluster stats comes out as list while it is more convenient to look at it as a table
+# This code below will produce a dataframe with observations in columns and variables in row
+# Not quite tidy data, which will require a tweak for plotting, but I prefer this view as an output here as I find it more comprehensive 
+library(fpc)
+cstats.table <- function(dist, tree, k) {
+clust.assess <- c("cluster.number","n","within.cluster.ss","average.within","average.between",
+                  "wb.ratio","dunn2","avg.silwidth")
+clust.size <- c("cluster.size")
+stats.names <- c()
+row.clust <- c()
+output.stats <- matrix(ncol = k, nrow = length(clust.assess))
+cluster.sizes <- matrix(ncol = k, nrow = k)
+for(i in c(1:k)){
+  row.clust[i] <- paste("Cluster-", i, " size")
+}
+for(i in c(2:k)){
+  stats.names[i] <- paste("Test", i-1)
+  
+  for(j in seq_along(clust.assess)){
+    output.stats[j, i] <- unlist(cluster.stats(d = dist, clustering = cutree(tree, k = i))[clust.assess])[j]
+    
+  }
+  
+  for(d in 1:k) {
+    cluster.sizes[d, i] <- unlist(cluster.stats(d = dist, clustering = cutree(tree, k = i))[clust.size])[d]
+    dim(cluster.sizes[d, i]) <- c(length(cluster.sizes[i]), 1)
+    cluster.sizes[d, i]
+    
+  }
+}
+output.stats.df <- data.frame(output.stats)
+cluster.sizes <- data.frame(cluster.sizes)
+cluster.sizes[is.na(cluster.sizes)] <- 0
+rows.all <- c(clust.assess, row.clust)
+# rownames(output.stats.df) <- clust.assess
+output <- rbind(output.stats.df, cluster.sizes)[ ,-1]
+colnames(output) <- stats.names[2:k]
+rownames(output) <- rows.all
+is.num <- sapply(output, is.numeric)
+output[is.num] <- lapply(output[is.num], round, 2)
+output
+}
+# I am capping the maximum amount of clusters by 7
+# I want to choose a reasonable number, based on which I will be able to see basic differences between customer groups as a result
+stats.df.divisive <- cstats.table(gower.dist, divisive.clust, 7)
+stats.df.divisive
+```
+
+```{r}
+# Elbow
+# Divisive clustering
+ggplot(data = data.frame(t(cstats.table(gower.dist, divisive.clust, 15))), 
+  aes(x=cluster.number, y=within.cluster.ss)) + 
+  geom_point()+
+  geom_line()+
+  ggtitle("Divisive clustering") +
+  labs(x = "Num.of clusters", y = "Within clusters sum of squares (SS)") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+# Agglomerative clustering,provides a more ambiguous picture
+ggplot(data = data.frame(t(cstats.table(gower.dist, aggl.clust.c, 15))), 
+  aes(x=cluster.number, y=within.cluster.ss)) + 
+  geom_point()+
+  geom_line()+
+  ggtitle("Agglomerative clustering") +
+  labs(x = "Num.of clusters", y = "Within clusters sum of squares (SS)") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+library("ggplot2")
+library("reshape2")
+library("purrr")
+library("dplyr")
+# let's start with a dendrogram
+library("dendextend")
+dendro <- as.dendrogram(aggl.clust.c)
+dendro.col <- dendro %>%
+  set("branches_k_color", k = 7, value =   c("darkslategray", "darkslategray4", "darkslategray3", "gold3", "darkcyan", "cyan3", "gold3")) %>%
+  set("branches_lwd", 0.6) %>%
+  set("labels_colors", 
+      value = c("darkslategray")) %>% 
+  set("labels_cex", 0.5)
+ggd1 <- as.ggdend(dendro.col)
+ggplot(ggd1, theme = theme_minimal()) +
+  labs(x = "Num. observations", y = "Height", title = "Dendrogram, k = 7")
+```
+
+```{r}
+# Cut tree into 7 groups
+grp <- cutree(aggl.clust.c, k = 7)
+head(grp, n = 200)
+
+# Get the names for the members of cluster 1
+rownames(NY_sub_name)[grp == 1]
+```
+
+#Stopped here with Proffesor Phillips
+```{r}
+pcenter <- attr(pmatrix, "scaled:center")
+pscale <- attr(pmatrix, "scaled:scale")
+
+rm_scales <- function(scaled_matrix) {
+  attr(scaled_matrix, "scaled:center") <- NULL
+  attr(scaled_matrix, "scaled:scale") <- NULL
+  scaled_matrix
+}
+
+pmatrix <- rm_scales(pmatrix)
+```
+
+#Create kmeans clustering 
+#Sorts the cluster on basis of number clustering
+#Cluster identification for each observation
+```{r}
+set.seed(125)
+km.res <- kmeans(pmatrix, 5, nstart = 25) #I have chosen 5 as the initial clusters to start with
+km.res$size
+km.res$cluster
+o=order(km.res$cluster)
+```
+
+# Confusion Matrix
+```{r}
+cm <- table(protein$Country, km.res$cluster) #Country is the response variable. Replace this response with your response variable.
+cm
+as.data.frame(protein$Country[o],protein$cluster[o]) #replace Country
+```
+
+#Visualize - 5 clusters mean 5 colors. Edit line 61 appropriately.
+```{r}
+fviz_cluster(km.res, data = pmatrix,
+             palette = c("#00AFBB","#2E9FDF", "#E7B800","red","#FC4E07"),
+             ggtheme = theme_minimal(),
+             main = "Partitioning Clustering Plot"
+)
+
+BSS <- km.res$betweenss
+TSS <- km.res$totss
+# We calculate the quality of the partition
+BSS / TSS * 100
+#The quality of the partition is 66.69%.
+
+#printing out kmeans results provide the above metric
+print(km.res)
+```
+
+
+```{r}
+km.res2 <- kmeans(pmatrix, centers = 5, nstart = 10) #k=5 here. made edits when needed
+100 * km.res2$betweenss / km.res2$totss
+```
+
+# Elbow method
+```{r}
+fviz_nbclust(pmatrix, kmeans, method = "wss") +
+  geom_vline(xintercept = 4, linetype = 2) + # add line for better visualization
+  labs(subtitle = "Elbow method") # add subtitle 
+```
+
+# Silhouette method
+```{r}
+fviz_nbclust(pmatrix, kmeans, method = "silhouette") +
+  labs(subtitle = "Silhouette method")
+```
+
+```{r}
+set.seed(42)
+fviz_nbclust(pmatrix, kmeans,
+             nstart = 25,
+             method = "gap_stat",
+             nboot = 500 # reduce it for lower computation time (but less precise results)
+) + labs(subtitle = "Gap statistic method")
+
+#The optimal number of clusters is the one that maximizes the gap statistic. 
+```
+
+#As you can see these three methods do not necessarily lead to the same result. Here, all 3 approaches suggest a number of clusters.
+
+#NbClust(): provides 30 indices for choosing the best number of clusters.
+```{r}
+#install.packages("NbClust")
+library(NbClust)
+nbclust_out <- NbClust(
+  data = pmatrix,
+  distance = "euclidean",
+  min.nc = 2, # minimum number of clusters
+  max.nc = 6, # maximum number of clusters
+  method = "kmeans" # one of: "ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid", "kmeans"
+)
+```
+
+# create a dataframe of the optimal number of clusters
+```{r}
+nbclust_plot <- data.frame(clusters = nbclust_out$Best.nc[1, ])
+# select only indices which select between 2 and 6 clusters
+nbclust_plot <- subset(nbclust_plot, clusters >=2 & clusters <= 6) #based on recommendations, min & max clusters will be evaluated
+
+# create plot
+ggplot(nbclust_plot) +
+  aes(x = clusters) +
+  geom_histogram(bins = 30L, fill = "#0c4c8a") +
+  labs(x = "Number of clusters", y = "Frequency among all indices", title = "Optimal number of clusters") +
+  theme_minimal()
+```
+
+```{r}
+#install.package("cluster")
+library(cluster)
+
+set.seed(42)
+km_res <- kmeans(pmatrix, centers = 4, nstart = 20) #k=4 based on optimal results. Start again.
+
+sil <- silhouette(km_res$cluster, dist(pmatrix))
+fviz_silhouette(sil)
+```
+
+#the interpretation of the silhouette coefficient is as follows:
+#> 0 means that the observation is well grouped. The closer the coefficient is to 1, the better the observation is grouped.
+#< 0 means that the observation has been placed in the wrong cluster.
+#= 0 means that the observation is between two clusters.
+
+#visualizing cluster results
+#Observations are represented by points in the plot, using principal components if ncol(data) > 2. An ellipse is drawn around each cluster.
+```{r}
+fviz_cluster(km_res, pmatrix, ellipse.type = "norm")
+```
+
